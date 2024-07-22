@@ -1,0 +1,62 @@
+# OPLS parameterization
+# [1] OPLS All-Atom Parameters for Organic Molecules, Ions, Peptides & Nucleic Acids: Jan  2007 - EMC
+# [2] Lorenz et al. Tribology Letters, Vol. 19, No. 2, June 2005
+# [3] Ligpargen 
+# [4] Micro & Nano Letters 2017, 12, 11, 943-848 
+
+mass    	1     28.085 # Si outer
+mass            2     28.085 # Si center
+mass    	3     15.999 # O
+mass    	4      1.008 # H outer
+mass    	5     12.011 # C
+mass		6      1.008 # H center
+mass		7     26.9815 # Al
+
+pair_style      lj/cut/coul/long 9.5 9.5
+bond_style      harmonic
+angle_style     harmonic
+dihedral_style  opls
+improper_style  cvff 
+pair_modify     mix geometric tail yes
+special_bonds   lj/coul 0 0 0.5
+
+# Pair Coeffs
+pair_coeff       1  1    0.100  4.0000000 #[1]
+pair_coeff       2  2    0.100  4.0000000 #[1]
+pair_coeff       3  3    0.170  3.0000000 #[1]
+pair_coeff       4  4    0.030  2.5000000 #[1]
+pair_coeff       5  5    0.066  3.5000000 #[1]
+pair_coeff	 6  6    0.030  2.5000000 #[1]
+pair_coeff       7  7    0.3973  2.620000 #[4]
+
+# Bond Coeffs
+bond_coeff      1  340.0000     1.0900 #CT-HC [1]
+bond_coeff      2  187.0000     1.8600 #Si-CT [1]
+bond_coeff      3  374.0000     1.6400 #Si-OS [1]  
+bond_coeff      4  166.0000     1.4800 #Si-H [1]
+
+# Angle Coeffs
+angle_coeff     1   33.000    107.800  #H-C-H [1]   
+angle_coeff     2   35.000    109.500  #Si-C-H [1]
+angle_coeff     3   60.000    110.000  #C-Si-C [1]
+angle_coeff     4   60.000    100.000  #O-Si-C [1]
+angle_coeff     5   20.000    145.000  #Si-O-Si [1]
+angle_coeff     6   42.500    109.500  #H-Si-O [3]
+angle_coeff     7   60.000    110.000  #O-Si-O [1]
+
+# Dihedral Coeffs
+dihedral_coeff	1      0.000      0.000      0.00      0.000 #H-Si-O-Si [1, 2]
+dihedral_coeff  2      0.000      0.000      0.00      0.000 #Si-O-Si-C [1, 2]
+dihedral_coeff  3      0.000      0.000      0.00      0.000 #O-Si-C-H [1, 2, 3]
+dihedral_coeff  4      0.000      0.000      0.18      0.000 #C-Si-C-H [3]
+
+# Improper
+improper_coeff  1      0.000     -1       2 #[3]
+
+
+#set		type 1 charge  1.0 #Si outer [1]
+#set             type 2 charge  0.85 #Si center [1]
+#set             type 3 charge -0.5 #O [balance]
+#set             type 4 charge  0.06 #H [1]
+#set             type 5 charge -0.43 #C [1]
+#set             type 6 charge -0.1 #H center [1]
