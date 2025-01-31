@@ -1,0 +1,31 @@
+---
+title: ""
+format:
+    pdf:
+        documentclass: article
+        fontsize: 12pt
+        include-in-header:  
+        - text: |
+            \usepackage{amsmath}
+            \usepackage{amsfonts}
+            \usepackage{amssymb}
+
+---
+
+
+$\text{SSE} = \sum_{k=1}^{2} \sum\limits_{i = 1}^{N_{k}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{kij} - \vec{\mu}_{kj})^{2}$
+
+$\text{MSE} = \frac{1}{N_{mol}}\sum\limits_{k=1}^{2} \sum\limits_{i = 1}^{N_{k}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{kij} - \vec{\mu}_{kj})^{2}$
+
+$\text{MSE}_{norm} = \frac{1}{N_{mol}\cdot N_{f}}\sum\limits_{k=1}^{2} \sum\limits_{i = 1}^{N_{k}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{kij} - \vec{\mu}_{kj})^{2}$
+
+$\text{MSE}_{k} = \frac{1}{N_{\mathnormal{k}}\cdot N_{f}} \sum\limits_{i = 1}^{N_{k}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{kij} - \vec{\mu}_{kj})^{2}$
+
+
+$\langle \text{MSE} \rangle = \frac{1}{N_{mol}\cdot N_{T}}\sum\limits_{T=1}^{N_{T}}\sum\limits_{k=1}^{2} \sum\limits_{i = 1}^{N_{k,T}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{Tkij} - \vec{\mu}_{kj})^{2}$
+
+$N_{\text{eff}} = N_{T} - \sum\limits_{T = 1}^{N_{T}}\delta(N_{k,T}, 0)$
+
+$\langle \text{MSE} \rangle_{k} = \frac{1}{N_{T}}\sum\limits_{T=1}^{N_{T}} \frac{1}{N_{k,T} + \delta(N_{k,T}, 0)}\sum\limits_{i = 1}^{N_{k,T}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{Tkij} - \vec{\mu}_{kj})^{2}$
+
+$\langle \text{MSE} \rangle_{k} = \frac{1}{N_{\text{eff}} + \delta(N_{\text{eff}}, 0)}\sum\limits_{T=1}^{N_{T}} \frac{1}{N_{k,T} + \delta(N_{k,T}, 0)}\sum\limits_{i = 1}^{N_{k,T}} \sum\limits_{j=1}^{N_{f}} (\vec{x}_{Tkij} - \vec{\mu}_{kj})^{2}$
