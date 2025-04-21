@@ -5,11 +5,11 @@ import utils
 
 
 @nb.njit
-def get_upper_tri_index(N):
-    indices = np.zeros((N * (N - 1) // 2, 2), dtype=np.int32)
+def get_upper_tri_index(n):
+    indices = np.zeros((n * (n - 1) // 2, 2), dtype=np.int32)
     index = 0
-    for i in range(N):
-        for j in range(i + 1, N):
+    for i in range(n):
+        for j in range(i + 1, n):
             indices[index] = i, j
             index += 1
     return indices
@@ -31,17 +31,17 @@ def generate_coord_num(
     start=0,
     end=-1,
     method="sparse",
-    to_print=True,
+    to_print=False,
 ):
     if end == -1:
-        end = df["Nt"]
+        end = df["nt"]
 
-    Nrad = len(radii)
+    nrad = len(radii)
     radii = np.array(radii).flatten()
-    Nmol = df["Nmolecule"]
+    nmol = df["nmolecule"]
 
     if to_print:
-        print("Generating Coordination Number...", end="")
+        print("Generating Coordination number...", end="")
 
     if method == "full":
         if "distance" not in list(df["molecule"].keys()):
@@ -49,7 +49,7 @@ def generate_coord_num(
         else:
             distances = df["molecule"]["distance"][start:end]
 
-        coord = np.zeros((Nrad, df["Nt"], df["Nmolecule"]), dtype=np.int16)
+        coord = np.zeros((nrad, df["nt"], df["nmolecule"]), dtype=np.int16)
         for idx, radius in enumerate(radii):
             coord[idx][start:end] = np.sum(distances < radius, axis=1) - 1
         del distances
@@ -59,13 +59,13 @@ def generate_coord_num(
             distances = df["molecule"]["distance"]
         else:
             distances = distance(df, method="sparse")
-        coord = generate_coord_num_sparse(Nmol, radii, distances).astype(np.int16)
+        coord = generate_coord_num_sparse(nmol, radii, distances).astype(np.int16)
 
     for i, radius in enumerate(radii):
         # if f"coordination_{radius}" not in list(df["molecule"].keys()):
-        if start != 0 or end != df["Nt"]:
+        if start != 0 or end != df["nt"]:
             df["molecule"][f"coordination_{radius}"] = np.zeros(
-                (df["Nt"], df["Nmolecule"]), dtype=np.int16
+                (df["nt"], df["nmolecule"]), dtype=np.int16
             )
             df["molecule"][f"coordination_{radius}"][start:end] = coord[i]
 
@@ -81,15 +81,15 @@ def generate_coord_num(
 
 
 @nb.njit(parallel=True)
-def generate_coord_num_sparse(Nmol, radii, distances):
-    Nt = distances.shape[0]
-    Nrad = radii.shape[0]
-    coord = np.zeros((Nrad, Nt, Nmol), dtype=np.int32)
-    ind = get_upper_tri_index(Nmol)
+def generate_coord_num_sparse(nmol, radii, distances):
+    nt = distances.shape[0]
+    nrad = radii.shape[0]
+    coord = np.zeros((nrad, nt, nmol), dtype=np.int32)
+    ind = get_upper_tri_index(nmol)
 
-    for rad_i in nb.prange(Nrad):
+    for rad_i in nb.prange(nrad):
         radius = radii[rad_i]
-        for mol_idx in range(Nmol):
+        for mol_idx in range(nmol):
             dist_mol = distance_mol(distances, mol_idx, ind)
             coord[rad_i, :, mol_idx] = np.sum(dist_mol < radius, axis=1)
 
@@ -98,32 +98,47 @@ def generate_coord_num_sparse(Nmol, radii, distances):
 
 @nb.njit(parallel=True)
 def distance_sparse(R, L):
-    Nt, N, _ = R.shape
-    Ndistances = N * (N - 1) // 2  # Number of unique distances
-    D = np.zeros((Nt, Ndistances), dtype=np.float32)
-    for t in nb.prange(Nt):
+    nt, n, _ = R.shape
+    ndistances = n * (n - 1) // 2  # number of unique distances
+    D = np.zeros((nt, ndistances), dtype=np.float32)
+    for t in nb.prange(nt):
         index = 0
-        for i in range(N):
-            for j in range(i + 1, N):
+        for i in range(n):
+            for j in range(i + 1, n):
                 d_squared = np.sum((utils.pbc(R[t, i] - R[t, j], L)) ** 2)
                 D[t, index] = np.sqrt(d_squared)
                 index += 1
 
     return D
 
+def distance_full(R, L):
+    ndim = R.ndim
+    # One timestep
+    if ndim == 2:
+        dist = R[:, np.newaxis, :] - R
+        dist = utils.pbc(dist, L)
+        dist = np.linalg.norm(dist, axis=2)
 
+    # All timesteps
+    elif ndim == 3:
+        dist = R[:, :, np.newaxis, :] - R[:, np.newaxis, :, :]
+        dist = utils.pbc(dist, L)
+        dist = np.linalg.norm(dist, axis=3)
+
+    return dist
+    
 def distance(df, method="sparse"):
     """
     Compute distance table
 
     Args:
-        R (np.array) : particle positions, shape (N, 3) or (Nt, N, 3)
+        R (np.array) : particle positions, shape (n, 3) or (nt, n, 3)
         L (np.array): side lengths of simulation box (3, )
         method: full distance table or flat distance arrays
     Returns:
-        distance_table (np.array): distance table, shape (N, N) or (Nt, N, N)
+        distance_table (np.array): distance table, shape (n, n) or (nt, n, n)
         or
-        distance (np.array): shape (Nt, N * (N -1) //2)
+        distance (np.array): shape (nt, n * (n -1) //2)
 
     """
     R = utils.get_pos(df)
@@ -134,17 +149,7 @@ def distance(df, method="sparse"):
         dist = distance_sparse(R, L)
 
     elif method == "full":
-        # One timestep
-        if ndim == 2:
-            dist = R[:, np.newaxis, :] - R
-            dist = utils.pbc(dist, L)
-            dist = np.linalg.norm(dist, axis=2)
-
-        # All timesteps
-        elif ndim == 3:
-            dist = R[:, :, np.newaxis, :] - R[:, np.newaxis, :, :]
-            dist = utils.pbc(dist, L)
-            dist = np.linalg.norm(dist, axis=3)
+        dist = distance_full(R, L)
 
     df["molecule"]["distance"] = dist
     return dist

@@ -7,7 +7,11 @@ import sys
 
 @nb.njit
 def normalize_arr(x):
-    return (x - np.min(x)) / (np.max(x) - np.min(x))
+    # return (x - np.min(x)) / (np.max(x) - np.min(x))
+    # return (x - np.mean(x)) / np.std(x)
+    q75, q25 = np.percentile(x, [75 ,25])
+    iqr = q75 - q25
+    return (x - np.mean(x)) / iqr
 
 
 def generate_dz(lags, df):
@@ -86,10 +90,10 @@ def pbc(R, L):
     in a cubic box of side length L.
 
     Args:
-        R (np.array): particle positions, shape (N, 3), (N, N, 3) or (Nt, N, N, 3)
+        R (np.array): particle positions, shape (n, 3), (n, n, 3) or (nt, n, n, 3)
         L (np.array): side lengths of simulation box (3,)
     Returns:
-        np.array: particle positions, shape (N, N, 3)
+        np.array: particle positions, shape (n, n, 3)
     """
 
     # if single pos. vector
@@ -97,6 +101,10 @@ def pbc(R, L):
         R[0] -= L[0] * np.round(R[0] / L[0])
         R[1] -= L[1] * np.round(R[1] / L[1])
         R[2] -= L[2] * np.round(R[2] / L[2])
+
+    # z coordinate
+    if R.ndim == 2:
+        R[:] -= L[2] * np.round(R / L[2])
 
     # single timestep
     elif R.ndim == 3:
@@ -113,14 +121,16 @@ def pbc(R, L):
     return R
 
 
-def generate_switch_info(df):
-    molecule_phase = df["molecule"]["phase"]
+def generate_switch_info(df, start = 0, actime = True):
+    start = get_lag(df, start, actime)
+    nt = df['nt'] - start
+    molecule_phase = df["molecule"]["phase"][start:]
     switch_i = []
-    for i in range(df["Nmolecule"]):
+    for i in range(df["nmolecule"]):
         if not ((molecule_phase[:, i] == 0).all() or (molecule_phase[:, i] == 1).all()):
             switch_i.append(i)
 
-    switch_z = df["molecule"]["z"][:, switch_i]
+    switch_z = df["molecule"]["z"][start:, switch_i]
     switch_phase = molecule_phase[:, switch_i]
     switch_z[switch_z < 0] -= df["offset"]
 
@@ -134,7 +144,7 @@ def generate_switch_info(df):
     for i in range(switch_z.shape[1]):
         last_phase = switch_phase[0, i]
 
-        for t in range(1, df["Nt"]):
+        for t in range(1, nt):
             phase = switch_phase[t, i]
 
             if phase != last_phase:
@@ -174,13 +184,13 @@ def generate_switch_info(df):
     switch_t = np.sort(np.unique(np.concatenate([liquid_gas_t, gas_liquid_t])))
     df["molecule"]["switch_t"] = switch_t
 
-    n_to_gas = np.zeros(df["Nt"], dtype=int)
-    n_to_liquid = np.zeros(df["Nt"], dtype=int)
-    nliquid = df["Nliquid"]
-    ngas = df["Ngas"]
-    rate_to_gas = np.zeros(df["Nt"])
-    rate_to_liquid = np.zeros(df["Nt"])
-    for t in range(df["Nt"]):
+    n_to_gas = np.zeros(nt, dtype=int)
+    n_to_liquid = np.zeros(nt, dtype=int)
+    nliquid = df["nliquid"]
+    ngas = df["ngas"]
+    rate_to_gas = np.zeros(nt)
+    rate_to_liquid = np.zeros(nt)
+    for t in range(nt):
         n_to_gas[t] = int((liquid_gas_t == t).sum())
         n_to_liquid[t] = int((gas_liquid_t == t).sum())
 
@@ -213,8 +223,8 @@ def write_switch_info(df, path):
     liquid_gas_t = df["molecule"]["liquid_gas_t"]
     n_to_gas = df["molecule"]["n_to_gas"]
     n_to_liquid = df["molecule"]["n_to_liquid"]
-    nliquid = df["Nliquid"]
-    ngas = df["Ngas"]
+    nliquid = df["nliquid"]
+    ngas = df["ngas"]
     centroids = df["centroids"]
     cluster_vars = df["cluster_vars"]
     x = df["molecule"]["x"]
@@ -228,7 +238,7 @@ def write_switch_info(df, path):
         header = f"HEADER {cluster_vars} mu_liq({centroids[0]}) mu_gas({centroids[-1]})"
         f.write(header + "\n")
 
-        for t in range(df["Nt"]):
+        for t in range(df["nt"]):
             t_header = f"TIMESTEP {timesteps[t]} nliq {nliquid[t]} ngas {ngas[t]} n_to_gas {n_to_gas[t]} n_to_liq {n_to_liquid[t]}"
             t_header += f" rate_to_gas {np.round(rate_to_gas[t], 4)} rate_to_liq {np.round(rate_to_liquid[t], 4)}"
             # t_header += " #per nanosecond"
@@ -260,8 +270,8 @@ def write_switch_info(df, path):
 def print_memory(path):
     file_size = os.path.getsize(path)
     available_memory = psutil.virtual_memory().available
-    print(f"file size: {file_size / 1024**3} GB")
-    print(f"available memory: {available_memory / 1024**3} GB")
+    print(f"file size: {file_size / 1024**3:.2f} GB")
+    print(f"available memory: {available_memory / 1024**3:.2f} GB")
 
     return None
 
@@ -329,11 +339,9 @@ def getsize(df):
     return None
 
 
-def parse(df, expr, mode="mol"):
-    if mode == "mol":
-        df_mode = df["molecule"]
-    else:
-        df_mode = df["atom"]
+def parse(df, expr, mode="molecule"):
+
+    df_mode = df[mode]
 
     op_map = {
         "log": np.log10,
@@ -358,6 +366,14 @@ def parse(df, expr, mode="mol"):
             data = data.astype(np.float32) + 1e-6
         f = op_map[op]
         data = f(data)
+
+    if data.shape[0] < df['nt']:
+        lag = df['nt'] - data.shape[0]
+        # data = np.concatenate((np.zeros(df['nt'] - data.shape[0]), data))
+        data = np.pad(
+            data, ((lag, 0), (0, 0)), "constant", constant_values=0
+        )
+        
     return data
 
 
@@ -391,6 +407,40 @@ def parse_label(expr):
 
         elif op == "sqrt":
             label = f"\\sqrt ({label})"
+
+    label = "$" + label + "$"
+
+    return label
+
+def parse_ylabel(expr):
+
+    ops = expr.split("(")
+    ops = [op.strip(")").strip() for op in ops if op]
+
+    var = ops[-1]
+    ops = ops[:-1][::-1]
+    if len(var.split("_")) > 1:
+        var = var.split("_")
+        feature = var[0]
+    else:
+        feature = var 
+
+    feature_units = {'coordination':'n_{molecule}', 'pe':'Kcal/mol', 'displacement':'Å', 'ke':'Kcal/mol', 'lt':'K'}
+    units = feature_units[feature]
+    label = units
+    
+    for op in ops:
+        if op == "abs":
+            label = f"\\lvert {units} \\rvert"
+
+        elif op == "norm":
+            label = units + "_{\\text{norm}}"
+
+        elif op == "log":
+            label = f"\\log ({units})"
+
+        elif op == "sqrt":
+            label = f"\\sqrt ({units})"
 
     label = "$" + label + "$"
 
@@ -460,20 +510,330 @@ def get_v(df):
     v = np.stack((vx, vy, vz), axis=-1)
     return v
 
+def get_lag(df, start = 0, actime = False, features = None):
 
-def density(z, Nbins, hist_range, time_avg=True):
-    Nt = z.shape[0]
+    if features is None:
+        features = df['cluster_vars']
+    lag = 0
+    for var in features:
+        if "displacement" in var or "dz" in var:
+            split = var.split('_')[-1]
+            try:
+                curr_lag = int(split[:2]) 
+            except:
+                curr_lag = int(split[:1])
 
-    if time_avg:
-        counts, edges = np.histogram(z, bins=Nbins, range=hist_range)
-        centers = (edges[:-1] + edges[1:]) / 2
-        density = counts / Nt
-        return density, centers
+            if curr_lag > lag:
+                lag = curr_lag    
+    if start > lag:
+        lag = start
+
+    if actime:
+        diff = df['actime'] - lag
+        if diff > 0:
+            lag += diff
+            
+    return lag
+
+@nb.njit(parallel=True)
+def get_min_max(z):
+    nt = z.shape[0]
+    max_neg = np.zeros(nt)
+    max_pos = np.zeros(nt)
+    for t in nb.prange(nt):
+        zt = z[t]
+        z_pos = zt[zt>=0]
+        z_neg = zt[zt<0]
+        max_pos[t] = np.max(z_pos)
+        max_neg[t] = np.max(np.abs(z_neg))
+    return np.min(max_pos), np.min(max_neg)        
+        
+
+def density(
+    df,
+    bin_width = 4, # Angstroms
+    z = None,
+    mode = 'molecule',
+    hist_range=None,
+    time_avg=False,
+    phase_mask = None,
+    absval=False,
+    center = False,
+    offset = True,
+    actime = False,
+    auto_range=False,
+    std = False,
+    norm = 'count',
+    t = None,
+    start = 0,
+):
+   
+    if z is None:
+        z = parse(df, 'z', mode)
+    if offset:
+        lower_mask = df[mode]["lower_mask"]
+        z[lower_mask] -= df["offset"]
+
+    start = get_lag(df, start, actime)
+
+    if center:
+        com = np.mean(df['atom']['z'], axis = 1)
+        z -= com[:, np.newaxis]
+        L = get_L(df)
+        z = pbc(z, L)
+    if t is None:
+        z = z[start:]
+        nt = z.shape[0]
+    else:
+        z = z[t]
+        nt = 1
+    if auto_range:
+        if t is None:
+            if not absval:
+                zmin = np.max(np.min(z, axis=1))  # lowest z bin present for all t
+                zmax = np.min(np.max(z, axis=1))  # highest z bin present for all t
+            else:
+                zmax_pos, zmax_neg = get_min_max(z)
+                zmin = np.max(np.min(np.abs(z),axis=1))
+                zmax = zmax_pos if zmax_pos <= zmax_neg else zmax_neg
+              
+        else:
+            if not absval:
+                zmin = z.min()
+                zmax = z.max()
+            else:
+                zmin = np.min(np.abs(z))
+                zmax1 = np.max(np.abs(z[z<0]))
+                zmax2 = np.max(z[z>0])
+                zmax = zmax1 if zmax1 < zmax2 else zmax2
+    if absval:
+        z = np.abs(z)            
+    if hist_range is None and not auto_range:
+        if not absval:
+            zmax = df["bounds"][-1, -1]
+            zmin = df["bounds"][-1, 0]
+        else:
+            zmax = df["bounds"][-1, -1]
+            zmin = z.min()
+            
+            
+    if hist_range is None:
+        hist_range = (zmin, zmax)
+    else:
+        zmin, zmax = hist_range
+
+    nbins = int(np.round((zmax - zmin) / bin_width, 0))
+
+    if nt == 1:
+        time_avg = False
+
+    phase = None
+    if (time_avg or nt == 1) and not std and phase_mask is None and norm != 'mass':
+
+        counts, bins = np.histogram(z, bins=nbins, range=hist_range)
+        zbin = (bins[:-1] + bins[1:]) / 2
+        density = counts / nt
+       
+        density = normalize_density(
+            df,
+            density,
+            z,
+            norm,
+            phase_mask,
+            mode,
+            zbin,
+            start,
+            bins,
+            nt,
+            phase,
+        )
+        if absval:
+            density /= 2
+        return density, zbin
 
     else:
-        density = np.zeros((Nt, Nbins))
-        for t in range(Nt):
-            counts, edges = np.histogram(z[t], bins=Nbins, range=hist_range)
-            density[t] = counts
-        centers = (edges[:-1] + edges[1:]) / 2
-        return density, centers
+        bins = np.linspace(hist_range[0], hist_range[1], nbins+1, endpoint=True)
+        zbin = (bins[1:] + bins[:-1]) / 2
+        
+        if phase_mask is not None:
+            phase = parse(df, 'phase', mode = mode)
+            if t is None:
+                phase = phase[start:]
+            else:
+                phase = phase[t]
+            mask = phase == phase_mask
+            if nt == 1:
+                density = density_nt_phase(z.reshape(1, -1), nt, nbins, hist_range, mask.reshape(1, -1))
+            else:
+                density = density_nt_phase(z, nt, nbins, hist_range, mask)
+        else:
+            density = density_nt(z, nt, nbins, hist_range) 
+        density = normalize_density(
+            df,
+            density,
+            z,
+            norm,
+            phase_mask,
+            mode,
+            zbin,
+            start,
+            bins,
+            nt,
+            phase,
+        )
+        if absval:
+            density /= 2
+        if nt == 1:
+            density = density.flatten()
+        err = None
+        if std:
+            err = np.std(density, axis = 0)
+        if time_avg:
+            density = np.mean(density, axis = 0)
+        if auto_range:
+            mask = density > 0
+            density = density[mask]
+            zbin = zbin[mask]
+            if std:
+                err = err[mask]
+            
+        return density, zbin, err
+
+def normalize_density(
+    df,
+    density,
+    z,
+    norm,
+    phase_mask,
+    mode,
+    zbin,
+    start,
+    bins,
+    nt,
+    phase,
+):
+
+    nt = density.shape[0]
+    nbins = bins.shape[0] - 1
+    if norm == 'count':
+        return density
+    if norm == "prob" or norm == "percent":
+        if mode == "atom":
+            n = df["natom"] - df["nmetal"]
+        else:
+            n = df["nmolecule"]
+            
+        density /= n
+
+    elif norm == 'mass':
+        
+        L = get_L(df)
+        dz = np.abs(zbin[1] - zbin[0])
+        slice_volume = dz * L[0] * L[1] * 1e-10**3
+        if mode  == 'atom':
+        
+            atom_masses = df['atom']['mass'][df['non_metal']] * df['AMU_TO_KG']
+            bin_indices = np.digitize(z, bins) - 1 # (nt, natom)
+
+            if phase_mask is not None:
+                phase_filter = phase == phase_mask
+            else:
+                phase_filter = np.ones_like(z, dtype = np.bool)
+
+            if nt == 1:
+                bin_mass = atomic_bin_mass(nbins, nt, bin_indices.reshape(1, -1), atom_masses, phase_filter.reshape(1, -1)) 
+            else:
+                bin_mass = atomic_bin_mass(nbins, nt, bin_indices, atom_masses, phase_filter)
+                
+            density = bin_mass / slice_volume
+
+        else:        
+            mol_weight = df["molecule"]["mass"] * df['AMU_TO_KG']
+            density = density * mol_weight / slice_volume
+            
+    return density
+
+
+@nb.njit(parallel=True)
+def atomic_bin_mass(nbins, nt,  bin_indices, atom_masses, phase_mask):
+    bin_mass = np.zeros((nt, nbins))
+    for i in nb.prange(nbins):
+        bin_filter = bin_indices == i # every atom that belongs to bin i (nt, natom)
+        for t in nb.prange(nt):
+            bin_i_t = bin_filter[t]
+            bin_mass[t][i] = np.sum(atom_masses[phase_mask[t] & bin_i_t]) # map atoms to masses and sum
+    return bin_mass
+
+@nb.njit(parallel = True)
+def density_nt_phase(z, nt, nbins, hist_range, mask):
+    density = np.zeros((nt, nbins))
+    for t in nb.prange(nt):
+        
+        z_t = z[t][mask[t]]
+        counts, _ = np.histogram(z_t, bins=nbins, range=hist_range)
+        density[t] = counts
+
+    return density 
+
+@nb.njit(parallel = True)
+def density_nt(z, nt, nbins, hist_range):
+    density = np.zeros((nt, nbins))
+    for t in nb.prange(nt):
+        
+        counts, _ = np.histogram(z[t], bins=nbins, range=hist_range)
+        density[t] = counts
+
+    return density 
+
+def phase_frac(df, phase, mode = 'molecule', std = True, start = 0, actime=True, time_avg = True):
+    start = get_lag(df, start, actime)
+    phase_map = {0: "nliquid", 1: "ngas"}
+    n_phase = phase_map[phase]
+    n = df[n_phase][start :]
+    if mode == 'atom':
+        n *= df["natom_per_molecule"]
+        frac = n / (df["natom"] - df["nmetal"])
+    else:
+        frac = n / df["nmolecule"]
+    if std:
+        err = np.std(frac)
+    if time_avg:
+        frac = np.mean(frac)
+    if std:
+        return frac, err
+    else:
+        return frac
+        
+
+def get_t_ns(df, t):
+    timesteps = df["timesteps"]
+    t0 = timesteps[0]
+    dt = df["dt"]
+    t_ns = (t * dt + t0) / 1e6
+
+    return t_ns
+
+
+def get_info(path):
+    info = path.split("/")[-1]
+    molecule_name = info.split("_")[1]
+    temp = info.find("K")
+    temp = int(info[temp - 3 : temp])
+    return molecule_name, temp
+
+def molecule_size(df):
+
+    z = df['atom']['z'][200][df['reference_molecule_mask']]
+    x = df['atom']['x'][200][df['reference_molecule_mask']]
+    y = df['atom']['y'][200][df['reference_molecule_mask']]
+    
+    m = 0
+    n = z.shape[0]
+    for i in range(n):
+        p1 = np.array([x[i], y[i], z[i]])
+        for j in range(i, n):
+            p2 = np.array([x[j], y[j], z[j]])
+            d = np.linalg.norm(p1 - p2)
+            if d > m:
+                m = d
+    return m

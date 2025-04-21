@@ -2,6 +2,10 @@ import numba as nb
 import numpy as np
 import utils
 import distance
+from minepy import MINE
+from numpy.linalg import norm
+from rdc import rdc as RDC
+from hyppo.independence import HHG
 
 
 def get_kvecs(n, L, step=1):
@@ -32,7 +36,7 @@ def get_kvecs(n, L, step=1):
 
 
 def get_kmags(kvecs):
-    kmags = np.linalg.norm(kvecs, axis=1)
+    kmags = norm(kvecs, axis=1)
     return kmags
 
 
@@ -105,12 +109,12 @@ def calc_sk(kvecs, pos):
 
 
 @nb.njit(parallel=True)
-def sk_time_average(r, kvecs, kmask, start, Nt=-1):
+def sk_time_average(r, kvecs, kmask, start, nt=-1):
     nmags = len(kmask)
-    if Nt == -1:
-        Nt = r.shape[2]
-    unique_sks = np.zeros((Nt, nmags))
-    for t in nb.prange(start, Nt):
+    if nt == -1:
+        nt = r.shape[2]
+    unique_sks = np.zeros((nt, nmags))
+    for t in nb.prange(start, nt):
         sk = calc_sk(kvecs, r[:, :, t])
         unique_sk = np.zeros(nmags)
         for i in range(nmags):
@@ -157,10 +161,10 @@ def actime(E):
     """
     Calculate the autocorrelation time of a time series E.
     At a given time lag k, the autocorrelation is given by
-    ac(k) = 1 / (Nt - k) * sum_{i=0}^{Nt-k} (E_i - mu) * (E_{i+k} - mu)
+    ac(k) = 1 / (nt - k) * sum_{i=0}^{nt-k} (E_i - mu) * (E_{i+k} - mu)
 
     In words, this represents the correlation between the first
-    Nt - k elements of the time series and the next Nt - k elements.
+    nt - k elements of the time series and the next nt - k elements.
     At k = 0, the autocorrelation is exactly 1
 
     The sample mean and variance are used instead of the mean
@@ -179,12 +183,12 @@ def actime(E):
     """
     mu = np.mean(E)
     std = np.std(E, ddof=1)
-    Nt = E.shape[0]
-    lags = np.arange(0, Nt, 1)
-    ac = np.zeros(Nt)
+    nt = E.shape[0]
+    lags = np.arange(0, nt, 1)
+    ac = np.zeros(nt)
 
     for lag in lags:
-        ac[lag] = np.mean((E[: Nt - lag] - mu) * (E[lag:] - mu)) / std**2
+        ac[lag] = np.mean((E[: nt - lag] - mu) * (E[lag:] - mu)) / std**2
 
     tcutoff = np.where(ac <= 0)[0][0] if (ac <= 0).any() else 0
     tau = 1 + 2 * np.sum(ac[1:tcutoff])
@@ -192,12 +196,12 @@ def actime(E):
 
 
 @nb.njit
-def _pair_correlation(distances, Nmol, dr, L):
+def _pair_correlation(distances, nmol, dr, L):
     """
     Calculate the pair correlation function g(r) over all t
 
     Args:
-        distances (np.array): 2d array of pair distances
+        distances (np.array): 2d array of unique pair distances
         dr (float): size of bins
         L (np.array): box dimensions
     Returns:
@@ -205,28 +209,30 @@ def _pair_correlation(distances, Nmol, dr, L):
         r: bin centers
     """
 
-    Nt = distances.shape[0]
+    nt = distances.shape[0]
+    distances = distances.flatten()
     bins = np.arange(distances.min(), distances.max() + dr, dr)
     r = (bins[:-1] + bins[1:]) / 2
-    histogram = np.histogram(distances.flatten(), bins=bins)[0] / Nt
+    counts = np.histogram(distances, bins=bins)[0] / nt
     V = np.prod(L)
-    rho = Nmol / V
+    rho = nmol / V
     shell_volume = 4.0 * np.pi / 3.0 * ((r + dr / 2) ** 3 - (r - dr / 2) ** 3)
     Nideal = rho * shell_volume
-    Nideal_pairs = Nmol * Nideal / 2
-    g = histogram / Nideal_pairs
-
+    # Nideal_pairs = Nideal * (nmol - 1) / 2
+    Nideal_pairs = Nideal * nmol
+    g = counts / Nideal_pairs
     return g, r
 
 
 def pair_correlation(df, dr):
     if "distance" not in list(df["molecule"].keys()):
+        print("generating distance")
         distance.distance(df)
 
-    dist = df["distance"]
-    Nmol = df["Nmolecule"]
+    dist = df["molecule"]["distance"]
+    nmol = df["nmolecule"]
     L = utils.get_L(df)
-    g, r = _pair_correlation(dist, Nmol, dr, L)
+    g, r = _pair_correlation(dist, nmol, dr, L)
     df["molecule"]["g"] = g
     df["molecule"]["r"] = r
 
@@ -242,9 +248,9 @@ def _calc_vaf0(v, t):
 
 @nb.njit
 def calc_vacf0(v):
-    Nt = v.shape[0]
-    vacf = np.zeros(Nt)
-    for t in range(Nt):
+    nt = v.shape[0]
+    vacf = np.zeros(nt)
+    for t in range(nt):
         vacf[t] = _calc_vaf0(v, t)
     return vacf
 
@@ -264,9 +270,86 @@ def diffusion_constant(vacf, dt):
     return np.trapz(vacf, dx=dt) / 3
 
 
+def distance(x, y):
+
+    """
+    Distance correlation looks for correlation in the
+    pairwise distances of two vectors (e.g. compares the
+    distribution of (X_i - X_j) to (Y_i - Y_j)
+
+    0 -> No correlation
+    1 -> Perfect correlation
+
+    Measures linear and nonlinear correlation. 
+    """
+
+    mu_x = np.mean(x)
+    mu_y = np.mean(y)
+    numerator = (x - mu_x).T @ (y - mu_y)
+    denominator = norm(x - mu_x) * norm(y - mu_y)
+
+    return numerator / denominator
+
+
+def mic(x, y, N = 10000):
+    """nonlinear correlation coefficient with a lot of criticism"""
+    idx = np.random.choice(N, size = N)
+    mine = MINE()
+    x = x.flatten()[idx]
+    y = y.flatten()[idx]
+    mine.compute_score(x, y)
+
+    return mine.mic()
+
+def cosine(x, y):
+
+    return np.dot(x, y) / (norm(x) * norm(y))
+
+def rdc(x, y):
+    """nonlinear correlation coefficient"""
+    x = x.flatten()
+    y = y.flatten()
+    return RDC(x, y)
+
+    
+def pearson(x, y):
+    x = x.flatten()
+    y = y.flatten()
+    return np.corrcoef(x, y)[1,0]
+
+def hhg(x, y, N = 10000):
+    """nonlinear correlation test"""
+    idx = np.random.choice(N, size = N)
+    x = x.flatten()[idx]
+    y = y.flatten()[idx]
+    stat, pvalue = HHG().test(x, y, workers = -1, auto = True)
+
+    return pvalue
+
+def corr_matrix(df, features, method = 'pearson', N = 10000):
+    nfeats = len(features)
+    mat = np.zeros((nfeats, nfeats))
+    func_map = {'pearson':pearson, 'distance':distance, 'mic':mic, 'cosine':cosine, 'hhg':hhg, 'rdc':rdc}
+    lag = utils.get_lag(df, features = features)
+    values = [utils.parse(df, feat)[lag:].flatten() for feat in features] 
+    X = np.array(values).T
+    for i in range(nfeats):
+        x = X[:, i]
+        for j in range(i, nfeats):
+            y = X[:, j]
+            if method == 'hhg' or method == 'mic':
+                corr = func_map[method](x, y, N)
+            else:
+                corr = func_map[method](x, y)
+                
+            mat[i, j] = corr
+            mat[j, i] = corr
+
+    return mat
+
 # def get_kvecs(
 #     lbox,
-#     Ntheta=10,
+#     ntheta=10,
 #     Nphi=10,
 #     mag_min=0,
 #     mag_max=5,
@@ -276,7 +359,7 @@ def diffusion_constant(vacf, dt):
 #     Calculate k vectors commensurate with a simulation box.
 
 #     Args:
-#         Ntheta: number of angles in theta direction (0 to pi)
+#         ntheta: number of angles in theta direction (0 to pi)
 #         Nphi: number of angles in phi direction (0 to 2pi)
 #         mag_min: minimum magnitude of k vector
 #         mag_max: maximum magnitude of k vector
@@ -286,7 +369,7 @@ def diffusion_constant(vacf, dt):
 #         array of shape (nk, ndim): collection of k vectors
 #     """
 
-#     theta = np.linspace(0, np.pi, Ntheta, endpoint=False)
+#     theta = np.linspace(0, np.pi, ntheta, endpoint=False)
 #     phi = np.linspace(0, 2 * np.pi, Nphi + 1, endpoint=False)[1:]
 #     kmags = np.arange(mag_min, mag_max + mag_step, mag_step)
 #     theta_grid, phi_grid, mag_grid = np.meshgrid(theta, phi, kmags, indexing="ij")
@@ -297,6 +380,6 @@ def diffusion_constant(vacf, dt):
 #     kvecs = np.stack((kx, ky, kz), axis=-1)
 
 #     kvecs = kvecs.reshape(-1, 3)
-#     kvecs = kvecs[Ntheta - 1 :]
+#     kvecs = kvecs[ntheta - 1 :]
 
 #     return kvecs

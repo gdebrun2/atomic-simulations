@@ -1,17 +1,21 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
-import utils
-from scipy import signal
+import os
+
 import correlation
+import dash
+import matplotlib
+import matplotlib.animation as animation
+import matplotlib.pyplot as plt
+import numpy as np
 import plotly.graph_objects as go
 import seaborn as sns
-from matplotlib.ticker import MaxNLocator
-import dash
-from dash import html, dcc
+import utils
+from dash import dcc, html
 from dash.dependencies import Input, Output, State
+from matplotlib.ticker import MaxNLocator
+from PIL import Image
+from scipy import signal
 
-plt.rcParams["font.family"] = "Times New Roman"
+# plt.rcParams["font.family"] = "Times new Roman"
 plt.rcParams["text.usetex"] = False
 higher_vars = [
     "abs(z)",
@@ -26,7 +30,7 @@ higher_vars = [
 lower_vars = [
     "ld",
     "coordination",
-]  # lower indicates gas
+]  # lower indicates gas0
 
 
 def plot_var_dist(
@@ -40,11 +44,15 @@ def plot_var_dist(
     xlabel="",
     norm=True,
 ):
+    start = df["actime"]
+    lag = utils.get_lag(df)
+    if str(lag) not in var:
+        start += lag
     if mode == "mol":
         x = utils.parse(df, var)
-        lag = df["Nt"] - x.shape[0]
+
         if color_phase:
-            phase = df["molecule"]["phase"][lag:]
+            phase = df["molecule"]["phase"]
             if not nbins:
                 nbins = [10, 10]
         elif nbins is None:
@@ -52,26 +60,28 @@ def plot_var_dist(
 
     elif mode == "atom":
         x = utils.parse(df, var, mode="atom")
-        lag = df["Nt"] - x.shape[0]
         if color_phase:
-            phase = df["atom"]["phase"][lag:]
+            phase = df["atom"]["phase"]
             if not nbins:
                 nbins = [100, 100]
 
         elif nbins is None:
             nbins = 100
-    if t and t < lag:
+    if t and t < start:
         t = None
-        print("t out of bounds, setting t to None")
+        print("t out of bounds, plotting all t")
 
     if t is not None:
         x = x[t]
         if color_phase:
             phase = phase[t]
     else:
-        x = x.flatten()
+        x = x[start:].flatten()
         if color_phase:
+            phase = phase[start:]
+            print(phase.shape)
             phase = phase.flatten()
+        print(x.shape, phase.shape)
 
     if norm:
         x = utils.normalize_arr(x)
@@ -86,9 +96,9 @@ def plot_var_dist(
         x2 = x[mask2]
 
         if isinstance(nbins, int):
-            N1 = nbins
-            N2 = int(np.round(N1 * (x2.max() - x2.min()) / (x1.max() - x1.min())))
-            nbins = [N1, N2]
+            n1 = nbins
+            n2 = int(np.round(n1 * (x2.max() - x2.min()) / (x1.max() - x1.min())))
+            nbins = [n1, n2]
 
         counts1, bins1 = np.histogram(x1, bins=nbins[0])
         bins1 = 0.5 * (bins1[:-1] + bins1[1:])
@@ -175,9 +185,9 @@ def plot_dist(
         x2 = x[mask2]
 
         if isinstance(nbins, int):
-            N1 = nbins
-            N2 = int(np.round(N1 * (x2.max() - x2.min()) / (x1.max() - x1.min())))
-            nbins = [N1, N2]
+            n1 = nbins
+            n2 = int(np.round(n1 * (x2.max() - x2.min()) / (x1.max() - x1.min())))
+            nbins = [n1, n2]
 
         counts1, bins1 = np.histogram(x1, bins=nbins[0])
         bins1 = 0.5 * (bins1[:-1] + bins1[1:])
@@ -291,19 +301,43 @@ def plot_molecule_trajectory(
     norm="count",
     xlim=None,
     axes=None,
-    absval=False,
+    absval=True,
+    center=True,
+    auto_range=True,
+    figsize=(12, 5),
+    density_title="",
 ):
     axs = plot_density(
-        df, kind=kind, fs=fs, norm=norm, xlim=xlim, axes=axes, absval=absval
+        df,
+        kind=kind,
+        fs=fs,
+        norm=norm,
+        xlim=xlim,
+        axes=axes,
+        absval=absval,
+        center=center,
+        auto_range=auto_range,
+        figsize=figsize,
+        title=density_title,
     )
+
     fig = plt.gcf()
     z = df["molecule"]["z"][:, mol_idx].copy()
     lower_mask = df["molecule"]["lower_mask"][:, mol_idx]
     z[lower_mask] -= df["offset"]
-    molecule_phase = df["molecule"]["phase"][:, mol_idx]
-    gas_mask = molecule_phase == 1
+    if center:
+        non_metal = df["non_metal"]
+        com = np.mean(df["atom"]["z"][:, non_metal], axis=1)
+        z = utils.pbc((z - com).reshape(1, -1), utils.get_L(df)).flatten()
 
-    t = np.arange(df["Nt"])
+    lag = utils.get_lag(df)
+    start = lag + df["actime"]
+
+    molecule_phase = df["molecule"]["phase"][:, mol_idx][start:]
+    gas_mask = molecule_phase == 1
+    z = z[start:]
+    t = np.arange(df["nt"])
+    t = t[start:]
     z1 = np.abs(z[gas_mask])
     t1 = t[gas_mask]
     z2 = np.abs(z[~gas_mask])
@@ -338,7 +372,7 @@ def plot_molecule_trajectory(
     title = r"$\text{Classification on }"
     title += (
         utils.concat_labels(df["cluster_vars"])
-        + r"\ \text{for Molecule } \beta "
+        + r"\ \text{for Molecule } "
         + rf"{mol_idx}$"
     )
     # cluster_vars = df["cluster_vars"]
@@ -390,7 +424,7 @@ def plot_class_mse(x, y, sse, n, title, fs=14):
         for i in range(sse.shape[0]):
             none = np.where(n[i] == 0)
             some = np.where(n[i] > 0)
-            n[i][none] = 1
+            n[i][None] = 1
             e.append(sse[i] / n[i])
             norm[some] += 1
 
@@ -419,6 +453,7 @@ def plot_traces(df, t, ntraces, top=False, bottom=False):
     y = df["molecule"]["y"][t - ntraces : t + 1]
     z = df["molecule"]["z"][t - ntraces : t + 1]
     phase = df["molecule"]["phase"][t - ntraces : t + 1]
+
     if top:
         mask = np.min(z, axis=0) > 0
         x = x[:, mask]
@@ -463,7 +498,7 @@ def plot_traces(df, t, ntraces, top=False, bottom=False):
         ),
         opacity=1,
         showlegend=False,
-        hoverinfo="none",
+        hoverinfo="None",
         connectgaps=False,
     )
     paths.append(trace)
@@ -476,6 +511,7 @@ def scatter_var(
     var,
     t,
     mode="atom",
+    phase=None,
     title="",
     traces=False,
     ntraces=5,
@@ -484,31 +520,54 @@ def scatter_var(
     metal_dynamics=False,
     top=False,
     bottom=False,
+    absval=False,
     step=False,
+    z0=None,
+    center=True,
+    width=600,
+    height=800,
+    fs=16,
+    size=None,
+    mask=None,
 ):
     paths = []
-    if mode == "atom":
-        size = 3
-        non_metal = df["non_metal"]
-        x = df["atom"]["x"][t][non_metal]
-        y = df["atom"]["y"][t][non_metal]
-        z = df["atom"]["z"][t][non_metal]
-        if var not in list(df["atom"].keys()):
-            data = df["molecule"][var][t]
-            color = np.zeros(df["Natom"])
-            color[non_metal] = np.repeat(data, df["Natom_per_molecule"])
-            color = color[non_metal]
-        else:
-            color = df["atom"][var][t][non_metal]
+    if var not in list(df[mode].keys()):
+        raise KeyError(f"{var} is not in the {mode} dataset")
 
-    else:
-        size = 7
-        x = df["molecule"]["x"][t]
-        y = df["molecule"]["y"][t]
-        z = df["molecule"]["z"][t]
-        color = df["molecule"][var][t]
-        if traces:
-            paths = plot_traces(df, t, ntraces, top=top, bottom=bottom)
+    x = df[mode]["x"][t]
+    y = df[mode]["y"][t]
+    z = df[mode]["z"][t]
+    color = utils.parse(df, var, mode=mode)[t]
+    if mask is not None and phase is None and not traces:
+        x = x[mask]
+        y = y[mask]
+        z = z[mask]
+        color = color[mask]
+    if size is None:
+        size = 3 if mode == "atom" else 7
+
+    if center:
+        com = np.mean(z)
+        z = utils.pbc((z - com).reshape(1, -1), utils.get_L(df)).flatten()
+
+    if traces:
+
+        if mode == "atom":
+            print("traces for atomic data too expensive. Continuing without...")
+        elif phase is not None:
+            print(
+                "Traces for a single phase have the issue that molecules are changing. Too annoying to implement."
+            )
+        else:
+            paths = plot_traces(df, t, ntraces, top=top, bottom=bottom)  # TODO phase
+
+    if phase is not None:
+        phase_mask = df[mode]["phase"][t] == phase
+        x = x[phase_mask]
+        y = y[phase_mask]
+        z = z[phase_mask]
+        color = color[phase_mask]
+
     if top:
         mask = z > 0
         x = x[mask]
@@ -521,6 +580,8 @@ def scatter_var(
         y = y[mask]
         z = z[mask]
         color = color[mask]
+    elif absval:
+        z = np.abs(z)
 
     data = []
     if var == "phase":
@@ -590,12 +651,41 @@ def scatter_var(
     if metal:
         metal_scatter = plot_metal(df, t, metal_dynamics)
         data.append(metal_scatter)
+
     data.extend(paths)
-    bounds = df["bounds"]
+    if z0 is not None:
+        light_yellow = [[0, "#FFDB58"], [1, "#FFDB58"]]
+        L = utils.get_L(df)
+        Lx = L[0]
+        Ly = L[1]
+        x = np.arange(-Lx, Lx)
+        y = np.arange(-Ly, Ly)
+        z_plane = z0 * np.ones((x.size, y.size))
+        upper_z0 = go.Surface(
+            x=x,
+            y=y,
+            z=z_plane,
+            colorscale=light_yellow,
+            showscale=False,
+            opacity=1,
+            name="z0",
+            showlegend=True,
+        )
+        lower_z0 = go.Surface(
+            x=x,
+            y=y,
+            z=-z_plane,
+            colorscale=light_yellow,
+            showscale=False,
+            opacity=1,
+        )
+        data.extend([upper_z0, lower_z0])
+
+    bounds = df["bounds"] * 1.05
     layout = go.Layout(
-        width=600,
-        height=800,
-        title={"text": title, "x": 0.5},
+        width=width,
+        height=height,
+        title={"text": title, "x": 0.5, "font": {"size": fs}},
         margin=dict(l=0, r=0, t=40, b=0),
         legend=dict(
             itemsizing="constant", yanchor="top", y=0.99, xanchor="left", x=0.01
@@ -606,8 +696,12 @@ def scatter_var(
             xaxis=dict(range=[bounds[0, 0], bounds[0, 1]]),
             yaxis=dict(range=[bounds[1, 0], bounds[1, 1]]),
             zaxis=dict(range=[bounds[2, 0], bounds[2, 1]]),
+            aspectmode="manual",
+            aspectratio=dict(x=1, y=1, z=1),
         ),
+        scene_camera=dict(eye=dict(x=2, y=2, z=0.25)),
     )
+
     if step:
         fig = dict(data=data, layout=layout)
 
@@ -617,11 +711,54 @@ def scatter_var(
     return fig
 
 
+def get_marks(timesteps):
+    timestep_indices = np.arange(timesteps.size)
+    if timestep_indices.size <= 50:
+        step = 1
+    elif timestep_indices.size <= 201:
+        step = 10
+
+    elif timestep_indices.size <= 1001:
+        step = 50
+
+    else:
+        step = 100
+
+    marks = {t: t for t in timestep_indices[::step].astype(str)}
+    slider_timesteps = np.array(list(marks.keys()), dtype=int)
+    t_min = slider_timesteps.min()
+    t_max = slider_timesteps.max()
+    return marks, step, t_min, t_max
+
+
+def get_title(df, var, t):
+    t_ns = utils.get_t_ns(df, t)
+
+    molecule = str(df["molecule_name"])
+    temp = str(df["temp"])
+    if var == "phase":
+        title = rf"\text{{{molecule} {temp}K}}"
+        title += utils.concat_labels(df["cluster_vars"])
+        title += r"\ \text{at} \ " + rf"t = {t_ns}" + r"\ \text{ns}"
+        title = r"$" + title + r"$"
+
+    else:
+        title = (
+            rf"\text{{{molecule} {temp}K}}"
+            + r"\ \text{at} \ "
+            + rf"t = {t_ns}"
+            + r"\ \text{ns}"
+        )
+        title = r"$" + title + r"$"
+    return title
+
+
 def scatter_var_step(
     df,
     var,
     t,
     mode="atom",
+    phase=None,
     traces=False,
     ntraces=5,
     reversescale=None,
@@ -631,25 +768,13 @@ def scatter_var_step(
     bottom=False,
     port="63854",
 ):
-    Nt = df["Nt"]
-    if t > Nt:
+    nt = df["nt"]
+    if t > nt:
         print("t greater than last timestep. Setting t = 0")
         t = 0
 
     timesteps = df["timesteps"]
-    if Nt <= 50:
-        step = 1
-    elif Nt <= 201:
-        step = 10
-
-    elif Nt <= 1001:
-        step = 50
-
-    else:
-        step = 100
-    marks = {t: t for t in np.arange(Nt)[::step].astype(str)}
-    slider_timesteps = np.array(list(marks.keys()), dtype=int)
-    # marks = {t: t for t in timesteps[::step].astype(str)}
+    marks, step, t_min, t_max = get_marks(timesteps)
 
     app = dash.Dash(__name__)
 
@@ -670,10 +795,9 @@ def scatter_var_step(
                         html.Div(
                             [
                                 dcc.Slider(
-                                    min=slider_timesteps.min(),
-                                    max=slider_timesteps.max(),
+                                    min=t_min.min(),
+                                    max=t_max.max(),
                                     step=step,
-                                    # value=t * df["dt"] + timesteps[0],
                                     value=t,
                                     id="timestep",
                                     marks=marks,
@@ -699,31 +823,19 @@ def scatter_var_step(
         )
     )
 
-    def get_title(var, t):
-        t_ns = (t * df["dt"] + timesteps[0]) / 1e6
-        if var == "phase":
-            title = utils.concat_labels(df["cluster_vars"])
-            title += r"\ \text{at} \ " + rf"t = {t_ns}" + r"\ \text{ns}"
-            title = r"$" + title + r"$"
-
-        else:
-            # title = f"{var} at t = {t_ns}"
-            title = rf"${var}" + r"\ \text{at} \ " + rf"t = {t_ns}" + r"\ \text{ns}"
-        return title
-
     @app.callback(
         Output("graph", "figure", allow_duplicate=True),
         Input("timestep", "value"),
         prevent_initial_call="initial_duplicate",
     )
     def update_slider(t):
-        # t = (t - df["timesteps"][0]) // df["dt"]
-        title = get_title(var, t)
+        title = get_title(df, var, t)
 
         fig = scatter_var(
             df,
             var,
             t,
+            phase=phase,
             mode=mode,
             title=title,
             traces=traces,
@@ -735,7 +847,6 @@ def scatter_var_step(
             bottom=bottom,
             step=True,
         )
-        # t = t * df["dt"] + df["timesteps"][0]
 
         return fig
 
@@ -747,16 +858,16 @@ def scatter_var_step(
         prevent_initial_call=True,
     )
     def step_forward(forward, t):
-        # t = (t - df["timesteps"][0]) // df["dt"]
         if forward:
-            t = min(t + 1, Nt - 1)
+            t = min(t + 1, nt - 1)
 
-        title = get_title(var, t)
+        title = get_title(df, var, t)
 
         fig = scatter_var(
             df,
             var,
             t,
+            phase=phase,
             mode=mode,
             title=title,
             traces=traces,
@@ -768,7 +879,6 @@ def scatter_var_step(
             bottom=bottom,
             step=True,
         )
-        # t = t * df["dt"] + df["timesteps"][0]
 
         return fig, t
 
@@ -780,18 +890,18 @@ def scatter_var_step(
         prevent_initial_call=True,
     )
     def step_backward(back, t):
-        # t = (t - df["timesteps"][0]) // df["dt"]
         if back:
             if traces:
                 t = max(t - 1, 0, ntraces)
             else:
                 t = max(t - 1, 0)
-        title = get_title(var, t)
+        title = get_title(df, var, t)
 
         fig = scatter_var(
             df,
             var,
             t,
+            phase=phase,
             mode=mode,
             title=title,
             traces=traces,
@@ -803,7 +913,6 @@ def scatter_var_step(
             bottom=bottom,
             step=True,
         )
-        # t = t * df["dt"] + df["timesteps"][0]
 
         return fig, t
 
@@ -815,11 +924,12 @@ def scatter_var_step(
     def save_fig(save, relayout_data, t):
         if save:
             t = (t - df["timesteps"][0]) // df["dt"]
-            title = get_title(var, t)
+            title = get_title(df, var, t)
             fig = scatter_var(
                 df,
                 var,
                 t,
+                phase=phase,
                 mode=mode,
                 title=title,
                 traces=traces,
@@ -834,7 +944,6 @@ def scatter_var_step(
             if relayout_data is not None and "scene.camera" in relayout_data:
                 camera = relayout_data["scene.camera"]
                 fig.update_layout(scene_camera=camera)
-            # fig = go.Figure(data=fig["data"], layout=fig["layout"], skip_invalid=True)
 
             fig.write_image(f"{var}_{t}.png", scale=3)
         return None
@@ -844,11 +953,6 @@ def scatter_var_step(
         port=port,
         jupyter_height=900,
     )
-    # if __name__ == "__main__":
-    #     app.run_server(
-    #         debug=True,
-    #         port="63854",
-    #     )
 
     return app
 
@@ -899,6 +1003,7 @@ def dz_hist(df, bins=20, fs=14):
 def coord_hist(df, bins=20, fs=14):
     keys = list(df["molecule"].keys())
     radii = [int(key.split("_")[-1]) for key in keys if "coordination" in key]
+    radii = np.sort(radii)
 
     def plot(ax, df, rad, fs):
         ax.hist(df["molecule"][f"coordination_{rad}"].flatten(), bins=bins, zorder=10)
@@ -910,6 +1015,50 @@ def coord_hist(df, bins=20, fs=14):
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     nrad = len(radii)
+
+    nrows = nrad // 2
+
+    try:
+        ncols = nrad // nrows
+    except:
+        ncols = 1
+
+    if nrows * ncols < nrad:
+        nrows += 1
+
+    fig, axs = plt.subplots(nrows, ncols, figsize=(3 * ncols, 3 * nrows))
+
+    if not isinstance(axs, np.ndarray):
+        plot(axs, df, radii[0], fs)
+
+    else:
+        for i, ax in enumerate(axs.flatten()):
+            if i >= nrad:
+                ax.axis("off")
+                continue
+
+            plot(ax, df, radii[i], fs)
+
+    fig.tight_layout()
+    plt.show()
+
+def displacement_hist(df, bins=20, fs=14):
+    keys = list(df["molecule"].keys())
+    radii = [int(key.split("_")[-1]) for key in keys if "displacement" in key]
+    radii = np.sort(radii)
+
+    def plot(ax, df, rad, fs):
+        ax.hist(df["molecule"][f"displacement_{rad}"].flatten(), bins=bins, zorder=10)
+        ax.set_xlabel("displacement ( Å)", fontsize=fs-2)
+        ax.set_ylabel("Molecule Count (Thousands)", fontsize=fs - 4)
+        ax.set_title(f"Time Lag = {rad*50} ps", fontsize=fs)
+        ax.grid()
+        ax.ticklabel_format(axis="y", style="sci", scilimits=(3, 3))
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.tick_params(axis = 'x', labelsize = 8)
+
+    nrad = len(radii)
+    
 
     nrows = nrad // 2
 
@@ -989,7 +1138,7 @@ def plot_molecule_dz(df, lag, mol_idx):
     fig, ax = plt.subplots(figsize=(7, 5))
 
     fs = 14
-    x = np.arange(df["Nt"])
+    x = np.arange(df["nt"])
     y = df["molecule"]["z"][:, mol_idx]
     ax.plot(x, y, label="Z")
     ax2 = ax.twinx()
@@ -1142,72 +1291,77 @@ def anim_phase(
 
 def plot_density(
     df,
-    nbins=2000,
+    nbins=200,
     kind="both",
     norm="count",
+    title="",
     fs=14,
     xlim=None,
     axes=None,
+    hist_range=None,
+    time_avg=True,
+    phase_mask=None,
     absval=False,
+    center=True,
+    actime=True,
+    auto_range=True,
+    std=False,
+    t=None,
+    figsize=(12, 5),
 ):
     if axes is None:
         if kind == "both":
-            fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(15, 5))
+            fig, axs = plt.subplots(nrows=1, ncols=2, figsize=figsize, dpi=200)
 
         else:
-            fig, axs = plt.subplots(nrows=1, ncols=1, figsize=(7, 5))
+            fig, axs = plt.subplots(nrows=1, ncols=1, figsize=figsize, dpi=200)
     else:
         axs = axes[1:]
-
-    non_metal = df["non_metal"]
 
     def plot(kind, df, ax):
         if kind == "both":
             return plot("atom", df, ax[0]), plot("molecule", df, ax[1])
+        # if kind == 'atom':
+        #     plot_title = "Atomic " + title
+        # else:
+        #     plot_title = "Molecular " + title
 
-        z = df[kind]["z"].copy()
-        lower_mask = df[kind]["lower_mask"]
-        z[lower_mask] -= df["offset"]
-        com = np.mean(z, axis=1)
-        z -= com[:, np.newaxis]
-
-        zmax = df["bounds"][-1, -1]
-        zmin = df["bounds"][-1, 0]
-        if absval:
-            z = np.abs(z)
-            zmin = 0
-        hist_range = (zmin, zmax)
-
-        if kind == "atom":
-            z = z[:, non_metal]
-
-        avg_density, zbin = utils.density(z, nbins, hist_range, time_avg=True)
-        ylabel = kind[0].upper() + kind[1:]
+        density, zbin, err = utils.density(
+            df,
+            nbins,
+            kind=kind,
+            norm=norm,
+            hist_range=hist_range,
+            time_avg=time_avg,
+            phase_mask=phase_mask,
+            absval=absval,
+            center=center,
+            actime=actime,
+            auto_range=auto_range,
+            std=std,
+            t=t,
+        )
 
         if norm == "prob" or norm == "percent":
-            if kind == "atom":
-                avg_density /= df["Natom"] - df["Nmetal"]
 
-            else:
-                avg_density /= df["Nmolecule"]
+            density *= 100
+            ylabel = "%"
 
-            avg_density *= 100
-            ylabel += " %"
+        elif norm == "mass":
+            ylabel = r"$\rho \ (kg \cdot m^{-3})$"
 
         else:
-            ylabel += " Count"
+            ylabel = "Count"
 
-        # z = np.linspace(zmin, zmax, num=nbins, endpoint=True)
-        z_mask = zbin < 0.95 * zmax
-        if zmin < 0:
-            z_mask = z_mask & (zbin > 0.95 * zmin)
-        else:
-            z_mask = z_mask & (zbin > 0.05 * zmin)
+        ax.plot(zbin, density, label=r"$\rho$", color="black")
 
-        ax.plot(zbin[z_mask], avg_density[z_mask], label=r"$\rho$", color="black")
+        if std:
+            ax.fill_between(zbin, density - err, density + err, alpha=0.4)
+
         ax.set_xlabel("Z (Å)", size=fs)
         ax.set_ylabel(ylabel, size=fs)
         ax.set_xlim(xlim)
+        ax.set_title(title, size=fs)
 
         return None
 
@@ -1216,7 +1370,7 @@ def plot_density(
     return axs
 
 
-def plot_pair_correlation(g, r, title=None, filter_size=10, fs=16, figsize=(6, 4)):
+def plot_pair_correlation(df, title=None, filter_size=None, fs=16, figsize=(6, 4)):
     """
     Plot the pair correlation function g(r) for all t
 
@@ -1226,22 +1380,223 @@ def plot_pair_correlation(g, r, title=None, filter_size=10, fs=16, figsize=(6, 4
     Returns:
         fig, ax
     """
-
+    g = df["molecule"]["g"]
+    r = df["molecule"]["r"]
+    L = utils.get_L(df)
     dr = r[1] - r[0]
     fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=200)
-    smoothed = signal.savgol_filter(g, filter_size, 3)[1:]
+    if filter_size is not None:
+        smoothed = signal.savgol_filter(g, filter_size, 3)[1:]
+        ax.plot(r[1:], smoothed + 1, color="tab:red", linestyle="--", linewidth=1.5)
 
     ax.plot(r, g + 1)
-    ax.plot(r[1:], smoothed + 1, color="tab:red", linestyle="--", linewidth=1.5)
     ax.set_xlabel(r"$|r| \ (Å)$", fontsize=fs)
     ax.set_ylabel("g(r)", fontsize=fs)
     if title is None:
         title = f"dr = {dr}Å"
+    else:
+        title += f" dr = {dr}Å"
     ax.set_title(title, fontsize=fs)
     ax.tick_params(axis="both", which="major", labelsize=fs)
+    ax.minorticks_on()
+    ax.grid()
+    ax.set_xlim(0, L.min() / 2)
 
     return fig, ax
 
 
 def plot_sk():
     pass
+
+
+def anim_scatter(
+    df,
+    mode,
+    var,
+    tmin,
+    tmax,
+    tstep,
+    path,
+    interval=300,
+    phase=None,
+    metal=False,
+    title="",
+    traces=False,
+    ntraces=5,
+    reversescale=None,
+    metal_dynamics=False,
+    top=False,
+    bottom=False,
+    absval=False,
+    step=False,
+    z0=None,
+    center=True,
+    width=600,
+    height=800,
+    fs=16,
+    size=None,
+):
+
+    for t in range(tmin, tmax, tstep):
+        fig_title = f"t={utils.get_t_ns(df, t):.2f}ns"
+        fig = scatter_var(
+            df,
+            var,
+            t,
+            phase=phase,
+            mode=mode,
+            traces=traces,
+            title=fig_title,
+            ntraces=ntraces,
+            reversescale=reversescale,
+            metal=metal,
+            metal_dynamics=metal_dynamics,
+            top=top,
+            bottom=bottom,
+            absval=absval,
+            step=step,
+            z0=z0,
+            center=center,
+            width=width,
+            height=height,
+            fs=fs,
+            size=size,
+        )
+        camera = dict(eye=dict(x=2, y=2, z=0.25))
+
+        fig.update_layout(scene_camera=camera)
+        fig.write_image(f"{path}fig{t}.png", scale=2)
+
+    image_paths = [im for im in sorted(os.listdir(path)) if im.endswith(".png")]
+    images = [np.array(Image.open(path + image)) for image in image_paths]
+
+    fig, ax = plt.subplots(dpi=200)
+    ax.set_frame_on(False)
+    ax.axis("off")
+    im = ax.imshow(images[0])
+    ax.set_title(title)
+
+    def animate(i):
+        im.set_array(images[i])
+        ax.set_title(title)
+        return (im,)
+
+    ani = animation.FuncAnimation(
+        fig,
+        animate,
+        frames=len(images),
+        interval=interval,
+        blit=True,
+        repeat_delay=1000,
+    )
+    ani.save(path + "animation.gif")
+
+    return ani
+
+
+def heatmap(mat, features, title="", cbar_title="", fs=10, cmap="coolwarm"):
+
+
+    ax = sns.heatmap(
+        mat,
+        robust=True,
+        annot=True,
+        cbar_kws={"label": cbar_title},
+        fmt=".2f",
+        cmap=cmap,
+    )
+
+    fig = plt.gcf()
+    fig.set_size_inches(6, 5)
+    fig.set_dpi(200)
+
+    # ax.invert_yaxis()
+    labels = [utils.parse_label(feat) for feat in features]
+    ax.set_yticklabels(labels, fontsize = fs)
+    ax.set_xticklabels(labels, fontsize = fs)
+    ax.set_title(title, fontsize = fs + 4)
+    cbar = ax.collections[0].colorbar
+    cbar.set_label(cbar_title, fontsize=fs)
+    cbar.ax.tick_params(labelsize=fs)
+    return fig, ax
+    
+
+
+# def anim_scatter_plotly():
+
+#     frame0 = plotting.scatter_var(df['lvc'][400], 'phase', 500, phase = 0, mode = 'molecule', metal = False, step = True)
+#     frames = []
+#     for t in range(501, 700, 10):
+#         frame = plotting.scatter_var(df['lvc'][400], 'phase', t, phase = 0, mode = 'molecule', metal = False, step = True)
+#         frames.append(go.Frame(data = frame['data']))
+
+#     fig = go.Figure(data = frame0['data'], layout = frame0['layout'], frames = frames)
+#     def frame_args(duration):
+#         return {
+#                 "frame": {"duration": duration},
+#                 "mode": "immediate",
+#                 "fromcurrent": True,
+#                 "transition": {"duration": duration, "easing": "linear"},
+#             }
+
+#     sliders = [
+#                 {
+#                     "pad": {"b": 10, "t": 60},
+#                     "len": 0.9,
+#                     "x": 0.1,
+#                     "y": 0,
+#                     "steps": [
+#                         {
+#                             "args": [[f.name], frame_args(0)],
+#                             "label": str(k),
+#                             "method": "animate",
+#                         }
+#                         for k, f in enumerate(fig.frames)
+#                     ],
+#                 }
+#             ]
+
+#     fig.update_layout(sliders=sliders)
+
+# import plotly.io as pio
+
+# ii = 1
+# pio.write_html(fig, file="test.html", auto_open=True)
+
+# import matplotlib.pyplot as plt
+# import matplotlib.gridspec as gridspec
+
+# Create a figure
+# fig = plt.figure(figsize=(10, 10))
+
+# # Create a 3x3 GridSpec
+# gs = gridspec.GridSpec(3, 3)
+
+# # Create subplots in the first two rows
+# ax1 = fig.add_subplot(gs[0, 0])
+# ax2 = fig.add_subplot(gs[0, 1])
+# ax3 = fig.add_subplot(gs[0, 2])
+# ax4 = fig.add_subplot(gs[1, 0])
+# ax5 = fig.add_subplot(gs[1, 1])
+# ax6 = fig.add_subplot(gs[1, 2])
+
+# # Create subplots in the last row, centered horizontally
+# gs_bottom = gridspec.GridSpecFromSubplotSpec(nrows=1, ncols = 4, subplot_spec = gs[2,:], width_ratios = [1, 2, 2, 1])
+# ax7 = fig.add_subplot(gs_bottom[0, 1])
+# ax8 = fig.add_subplot(gs_bottom[0, 2])
+
+# # Optionally, you can add titles or labels to the subplots
+# ax1.set_title('Subplot 1')
+# ax2.set_title('Subplot 2')
+# ax3.set_title('Subplot 3')
+# ax4.set_title('Subplot 4')
+# ax5.set_title('Subplot 5')
+# ax6.set_title('Subplot 6')
+# ax7.set_title('Subplot 7')
+# ax8.set_title('Subplot 8')
+
+# # Adjust layout to prevent overlap
+# plt.tight_layout()
+
+# # Show the plot
+# plt.show()

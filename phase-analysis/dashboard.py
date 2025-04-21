@@ -3,12 +3,17 @@ import numpy as np
 from dash import Dash, html, dcc, callback, Output, Input, State
 from dash.exceptions import PreventUpdate
 import kmeans
+
+# import correlate
+import read as file_read
+import plotting
 import utils
 import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 from time import time
 import csv
 import os
+
 
 # sys.settrace("call")
 
@@ -20,12 +25,15 @@ import os
 
 # if args.metal_type is None:
 metal_type = 1
+port = 8080
 # metal_type = 1
 #
 # else:
 # metal_type = args.metal_type
 
-
+# env = os.environ
+# for key, value in env.items():
+#     print(key, value)
 atomic_masses = {
     1: 28.085,
     2: 28.085,
@@ -49,6 +57,8 @@ non_data_vars = [
     "id",
     "type",
     "phase",
+    "mask",
+    "lower_mask",
 ]  # remove from analysis
 pos_vars = [
     "q",
@@ -59,12 +69,28 @@ pos_vars = [
     "mass",
 ]  # exclude pos version from dropdown
 
-df = {}
+higher_vars = [
+    "|z|",
+    "|vz|",
+    "ke",
+    "lt",
+    "speed",
+    "dz",
+    "displacement",
+    "pe",
+]  # highter indicates gas
+lower_vars = [
+    "ld",
+    "coordination",
+]  # lower indicates gas
 
+
+df = {}
+text_color = "white"
 
 file_in = html.Div(
     [
-        dbc.Label("Data File:", style={"display": "inline-block"}),
+        dbc.Label("Data File:", style={"display": "inline-block", "color": text_color}),
         dcc.Input(
             value="",
             id="file-in",
@@ -80,7 +106,7 @@ file_in = html.Div(
                 "display": "inline-block",
             },
         ),
-        dbc.Label("Nt:", style={"display": "inline-block"}),
+        dbc.Label("Nt:", style={"display": "inline-block", "color": text_color}),
         dcc.Input(
             value="",
             id="Nt-lim",
@@ -112,7 +138,7 @@ file_in = html.Div(
                 "marginRight": "10px",
             },
         ),
-        dbc.Label("Mode:", style={"display": "inline-block"}),
+        dbc.Label("Mode:", style={"display": "inline-block", "color": text_color}),
         dcc.RadioItems(
             options=["View", "Train", "Classify"],
             value="View",
@@ -123,6 +149,7 @@ file_in = html.Div(
                 "margin-left": "10px",
                 "margin-right": "0px",
                 "display": "inline-block",
+                "color": text_color,
             },
             labelStyle={"margin-right": "10px"},
             inputStyle={"margin-right": "5px"},
@@ -138,6 +165,7 @@ file_in = html.Div(
                 "display": "inline-block",
                 "margin-right": "0px",
                 "font-size": "8",
+                "color": text_color,
             },
             inputStyle={"margin-right": "5px"},
         ),
@@ -217,9 +245,7 @@ distribution_options = html.Div(
     [
         dbc.Label(
             "Distribution Mode:",
-            style={
-                "display": "inline-block",
-            },
+            style={"display": "inline-block", "color": text_color},
         ),
         dcc.RadioItems(
             ["Atom", "Molecule"],
@@ -230,6 +256,7 @@ distribution_options = html.Div(
                 "margin-left": "10px",
                 "margin-right": "10px",
                 "display": "inline-block",
+                "color": text_color,
             },
             labelStyle={"margin-right": "5px"},
             inputStyle={"margin-right": "5px"},
@@ -240,7 +267,7 @@ distribution_options = html.Div(
                 None,
                 id="distribution-var",
                 placeholder="Select Var",
-                style={"width": "100%", "height": "100%"},
+                style={"width": "100%", "height": "100%", "color": text_color},
             ),
             style={
                 "width": "10%",
@@ -258,6 +285,7 @@ distribution_options = html.Div(
                 "margin-left": "10px",
                 "display": "inline-block",
                 "margin-right": "0px",
+                "color": text_color,
             },
             inputStyle={"margin-right": "5px"},
         ),
@@ -269,6 +297,7 @@ distribution_options = html.Div(
                 "margin-left": "10px",
                 "display": "inline-block",
                 "margin-right": "0px",
+                "color": text_color,
             },
             inputStyle={"margin-right": "5px"},
         ),
@@ -280,6 +309,7 @@ distribution_options = html.Div(
                 "margin-left": "10px",
                 "display": "inline-block",
                 "margin-right": "0px",
+                "color": text_color,
             },
             inputStyle={"margin-right": "5px"},
         ),
@@ -289,6 +319,7 @@ distribution_options = html.Div(
                 "display": "inline-block",
                 "margin-left": "10px",
                 "margin-right": "3px",
+                "color": text_color,
             },
         ),
         html.Div(
@@ -300,10 +331,7 @@ distribution_options = html.Div(
                 value="",
                 id="color-by-distribution",
                 placeholder="Select",
-                style={
-                    "width": "100%",
-                    "height": "100%",
-                },
+                style={"width": "100%", "height": "100%", "color": text_color},
             ),
             style={
                 "display": "inline-block",
@@ -336,6 +364,18 @@ distribution = html.Div(
             },
             mathjax=True,
         ),
+        html.Div(
+            html.Div(
+                [html.Button("Save", id="save")],
+                style={
+                    "width": "100%",
+                    "display": "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                },
+            ),
+            style={"width": "100%", "marginTop": "20px"},
+        ),
     ],
     style={
         "width": "100%",
@@ -353,6 +393,7 @@ cluster_options = html.Div(
             style={
                 "display": "inline-block",
                 "margin-left": "0px",
+                "color": text_color,
             },
         ),
         dcc.RadioItems(
@@ -365,6 +406,7 @@ cluster_options = html.Div(
                 "margin-right": "0px",
                 "display": "inline-block",
                 "padding-left": "5px",
+                "color": text_color,
             },
             labelStyle={"margin-right": "5px"},
             inputStyle={"margin-right": "5px"},
@@ -377,6 +419,7 @@ cluster_options = html.Div(
                 "margin-left": "5px",
                 "display": "inline-block",
                 "margin-right": "5px",
+                "color": text_color,
             },
             inputStyle={"margin-right": "5px"},
         ),
@@ -385,22 +428,20 @@ cluster_options = html.Div(
             style={
                 "display": "inline-block",
                 "margin-left": "5px",
+                "color": text_color,
             },
         ),
         html.Div(
             dcc.Dropdown(
                 options=[
-                    {"value": "Phase", "label": "Phase"},
-                    {"value": "Molecule ID", "label": "Molecule ID"},
-                    {"value": "Atom Type", "label": "Atom Type"},
+                    {"value": "phase", "label": "Phase"},
+                    {"value": "molecule_id", "label": "Molecule ID"},
+                    {"value": "type", "label": "Atom Type"},
                 ],
-                value="Atom Type",
+                value="type",
                 id="color-by-scatter",
                 placeholder="Select",
-                style={
-                    "width": "100%",
-                    "height": "100%",
-                },
+                style={"width": "100%", "height": "100%", "color": text_color},
             ),
             style={
                 "display": "inline-block",
@@ -419,10 +460,7 @@ cluster_options = html.Div(
                 id="cluster-vars",
                 multi=True,
                 placeholder="Select Cluster Variables",
-                style={
-                    "width": "100%",
-                    "height": "100%",
-                },
+                style={"width": "100%", "height": "100%", "color": text_color},
             ),
             style={
                 "display": "inline-block",
@@ -457,15 +495,40 @@ scatter = html.Div(
             },
         ),
         html.Div(
-            dcc.Slider(
-                min=0,
-                max=1,
-                step=0.01,
-                value=0,
-                id="timestep",
-                marks=None,
+            [
+                html.Div(
+                    [
+                        html.Button("←", id="back"),
+                        html.Button("→ ", id="forward"),
+                    ],
+                ),
+                html.Div(
+                    dcc.Slider(
+                        min=0,
+                        max=1,
+                        step=0.01,
+                        value=0,
+                        id="timestep",
+                        marks=None,
+                    ),
+                    style={"width": "90%"},
+                ),
+            ],
+            style={
+                "display": "flex",
+            },
+        ),
+        html.Div(
+            html.Div(
+                [html.Button("Save", id="save")],
+                style={
+                    "width": "100%",
+                    "display": "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                },
             ),
-            style={"width": "100%"},
+            style={"width": "100%", "marginTop": "-10px"},
         ),
     ],
     style={
@@ -552,6 +615,7 @@ app.layout = html.Div(
     Output("mode", "value"),  # start reset
     Output("scatter-mode", "value"),
     Output("color-by-scatter", "value", allow_duplicate=True),
+    Output("color-by-scatter", "options", allow_duplicate=True),
     Output("distribution-var", "value"),
     Output("abs", "value"),
     Output("normalize-dist", "value"),
@@ -598,12 +662,13 @@ def update_data(
     if read:
         file_in = file_in.strip()
         file_in = file_in.strip('"')
-        df_ = utils.process_data(file_in, atomic_masses, Nt_lim=Nt_lim, mode = 'mmap')
+        df_ = file_read.process_data(
+            file_in, atomic_masses, Nt_lim=Nt_lim, mode="mmap", metal_type=metal_type
+        )
         global df
         df = df_
+        df["atom"]
         df_molecule = df["molecule"]
-        dt = df["dt"]
-        timesteps = df["timesteps"]
         Nt = df["Nt"]
         vars = list(df_molecule.keys())
         cluster_vars = []
@@ -611,6 +676,8 @@ def update_data(
         for var in list(vars):
             if var not in non_data_vars:
                 distribution_vars.append(var.split("_")[-1])
+                if var == "z":
+                    distribution_vars.append("|" + var + "|")
 
             if var not in pos_vars + non_data_vars:
                 cluster_vars.append(var)
@@ -628,32 +695,21 @@ def update_data(
 
         print("\nDone\n")
 
-        if Nt <= 201:
-            step = 10
-
-        elif Nt <= 1001:
-            step = 50
-
-        else:
-            step = 100
-
-        marks = {t: t for t in timesteps[::step].astype(str)}
-
-        if t not in timesteps:
-            t = timesteps[0]
+        timesteps = df["timesteps"]
+        marks, step, t_min, t_max = plotting.get_marks(timesteps)
+        color_by_options = [{"value": var, "label": var} for var in distribution_vars]
 
         return (
             cluster_vars,
             distribution_vars,
-            timesteps[0],
-            timesteps[-1],
-            dt,
+            t_min,
+            t_max,
+            step,
             marks,
-            # scatter[0],
-            # distribution[0],
             mode,
             scatter_mode,
             color_by_scatter,
+            color_by_options,
             distribution_var,
             [] if abs is None else abs,
             [] if normalize is None else normalize,
@@ -840,8 +896,7 @@ def update_scatter(
     cluster_vars, t, mode, scatter_mode, color_by, color_by_options, use_external, t0
 ):
     global df
-
-    color_by_options[0]["disabled"] = False
+    # color_by_options[0]["disabled"] = False
 
     color = None
 
@@ -855,9 +910,9 @@ def update_scatter(
         return fig, color_by, color_by_options
 
     if not cluster_vars:
-        color_by_options[0]["disabled"] = True
+        # color_by_options[0]["disabled"] = True
 
-        if color_by == "Phase":
+        if color_by == "phase":
             color_by = ""
 
     data = []
@@ -867,6 +922,7 @@ def update_scatter(
     df_atom = df["atom"]
     df_molecule = df["molecule"]
     scatter_mode = scatter_mode.lower()
+    # print(list(df.keys()))
     data = df[scatter_mode]
 
     if scatter_mode == "molecule":
@@ -875,18 +931,21 @@ def update_scatter(
         if color_by == "Atom Type":
             color_by = ""
 
-    x = data[scatter_mode]["x"][t]
-    y = data[scatter_mode]["y"][t]
-    z = data[scatter_mode]["z"][t]
+    x = data["x"][t]
+    y = data["y"][t]
+    z = data["z"][t]
 
     if color_by == "Atom Type":
-        color = data["type"][t]
+        color_by = "type"
+        color = data[color_by][t]
 
     elif color_by == "Molecule ID":
         if scatter_mode.lower() == "atom":
-            color = data["molecule_id"][t]
+            color_by = "molecule_id"
+            color = data[color_by][t]
         else:
-            color = data["id"][t]
+            color_by = "id"
+            color = data[color_by][t]
 
     elif color_by == "Phase":
         if cluster_vars:
@@ -942,6 +1001,127 @@ def update_scatter(
         ),
         template="plotly_dark",
     )
+
+    # @callback(
+    #     Output("graph", "figure", allow_duplicate=True),
+    #     Input("timestep", "value"),
+    #     prevent_initial_call="initial_duplicate",
+    # )
+    # def update_slider(t):
+    #     title = plotting.get_title(df, var, t)
+
+    #     fig = scatter_var(
+    #         df,
+    #         var,
+    #         t,
+    #         mode=mode,
+    #         title=title,
+    #         traces=traces,
+    #         ntraces=ntraces,
+    #         reversescale=reversescale,
+    #         metal=metal,
+    #         metal_dynamics=metal_dynamics,
+    #         top=top,
+    #         bottom=bottom,
+    #         step=True,
+    #     )
+
+    #     return fig
+
+    # @callback(
+    #     Output("graph", "figure", allow_duplicate=True),
+    #     Output("timestep", "value", allow_duplicate=True),
+    #     Input("forward", "n_clicks"),
+    #     State("timestep", "value"),
+    #     prevent_initial_call=True,
+    # )
+    # def step_forward(forward, t):
+    #     if forward:
+    #         t = min(t + 1, Nt - 1)
+
+    #     title = get_title(df, var, t)
+
+    #     fig = scatter_var(
+    #         df,
+    #         var,
+    #         t,
+    #         mode=mode,
+    #         title=title,
+    #         traces=traces,
+    #         ntraces=ntraces,
+    #         reversescale=reversescale,
+    #         metal=metal,
+    #         metal_dynamics=metal_dynamics,
+    #         top=top,
+    #         bottom=bottom,
+    #         step=True,
+    #     )
+
+    #     return fig, t
+
+    # @callback(
+    #     Output("graph", "figure", allow_duplicate=True),
+    #     Output("timestep", "value", allow_duplicate=True),
+    #     Input("back", "n_clicks"),
+    #     State("timestep", "value"),
+    #     prevent_initial_call=True,
+    # )
+    # def step_backward(back, t):
+    #     if back:
+    #         if traces:
+    #             t = max(t - 1, 0, ntraces)
+    #         else:
+    #             t = max(t - 1, 0)
+    #     title = get_title(df, var, t)
+
+    #     fig = scatter_var(
+    #         df,
+    #         var,
+    #         t,
+    #         mode=mode,
+    #         title=title,
+    #         traces=traces,
+    #         ntraces=ntraces,
+    #         reversescale=reversescale,
+    #         metal=metal,
+    #         metal_dynamics=metal_dynamics,
+    #         top=top,
+    #         bottom=bottom,
+    #         step=True,
+    #     )
+
+    #     return fig, t
+
+    # @callback(
+    #     Input("save", "n_clicks"),
+    #     State("graph", "relayoutData"),
+    #     State("timestep", "value"),
+    # )
+    # def save_fig(save, relayout_data, t):
+    #     if save:
+    #         t = (t - df["timesteps"][0]) // df["dt"]
+    #         title = get_title(df, var, t)
+    #         fig = scatter_var(
+    #             df,
+    #             var,
+    #             t,
+    #             mode=mode,
+    #             title=title,
+    #             traces=traces,
+    #             ntraces=ntraces,
+    #             reversescale=reversescale,
+    #             metal=metal,
+    #             metal_dynamics=metal_dynamics,
+    #             top=top,
+    #             bottom=bottom,
+    #             step=False,
+    #         )
+    #         if relayout_data is not None and "scene.camera" in relayout_data:
+    #             camera = relayout_data["scene.camera"]
+    #             fig.update_layout(scene_camera=camera)
+
+    #         fig.write_image(f"{var}_{t}.png", scale=3)
+    #     return None
 
     return fig, color_by, color_by_options
 
@@ -1134,7 +1314,7 @@ def update_distribution(
 if __name__ == "__main__":
     app.run(
         debug=True,
-        port="63854",
+        port="8080",
         # dev_tools_hot_reload=True,
         # dev_tools_hot_reload_interval=5,
         # dev_tools_hot_reload_max_retry=10,
