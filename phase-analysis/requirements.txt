@@ -8,7 +8,6 @@ asttokens==3.0.0
 async-lru==2.0.5
 attrs==25.3.0
 babel==2.17.0
-batchspawner @ https://github.com/jupyterhub/batchspawner/archive/main.zip#sha256=f0632d9aa25872e5aafe9475f31e7efb69fce2b9a783310106fb47be1d7b3102
 beautifulsoup4==4.13.3
 bleach==6.2.0
 blinker==1.9.0
@@ -21,8 +20,6 @@ comm==0.2.2
 contourpy==1.3.1
 cryptography==44.0.2
 cycler==0.12.1
-Cython @ file:///croot/cython_1736260275371/work
-daal==2025.4.0
 dash==3.0.2
 debugpy==1.8.13
 decorator==5.2.1
@@ -68,7 +65,6 @@ Mako==1.3.10
 MarkupSafe==3.0.2
 matplotlib==3.10.1
 matplotlib-inline==0.1.7
-minepy @ file:///home/gtdebru/minepy
 mistune==3.1.3
 narwhals==1.34.1
 nbclient==0.10.2
@@ -77,10 +73,8 @@ nbformat==5.10.4
 nest-asyncio==1.6.0
 notebook_shim==0.2.4
 numba==0.61.2
-numpy @ file:///home/conda/feedstock_root/build_artifacts/numpy_1742254787379/work/dist/numpy-2.2.4-cp313-cp313-linux_x86_64.whl#sha256=f76ad032934da2c4719e50abb4142164ac1b039dc18f5fc412a5048a8bade5ae
 oauthlib==3.2.2
 overrides==7.7.0
-ovito==3.12.1
 packaging==24.2
 pamela==1.2.0
 pandas==2.2.3
@@ -114,7 +108,6 @@ rfc3339-validator==0.1.4
 rfc3986-validator==0.1.1
 rpds-py==0.24.0
 scikit-learn==1.6.1
-scikit-learn-intelex==2025.4.0
 scipy==1.15.2
 seaborn==0.13.2
 Send2Trash==1.8.3
@@ -125,15 +118,12 @@ sniffio==1.3.1
 soupsieve==2.6
 SQLAlchemy==2.0.40
 stack-data==0.6.3
-tbb==2022.1.0
-tcmlib==1.3.0
 terminado==0.18.1
 threadpoolctl==3.6.0
 tinycss2==1.4.0
 tornado==6.4.2
 tqdm==4.67.1
 traitlets==5.14.3
-traits @ file:///home/conda/feedstock_root/build_artifacts/traits_1737796628815/work
 types-python-dateutil==2.9.0.20241206
 typing-inspection==0.4.0
 typing_extensions==4.13.2
